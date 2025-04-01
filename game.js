@@ -1,7 +1,7 @@
 // Wait for DOM to load
 window.addEventListener('load', () => {
     const config = {
-        type: Phaser.CANVAS,
+        type: Phaser.WEBGL,
         canvas: document.getElementById('game-canvas'),
         parent: 'game-container',
         scale: {
@@ -206,44 +206,75 @@ function update() {
     this.graphics.closePath();
     this.graphics.fill();
     
-    // Draw ground with Mode 7 perspective and tilted horizon
-    for (let screenY = 0; screenY < SCREEN_HEIGHT; screenY++) {
-        for (let screenX = 0; screenX < SCREEN_WIDTH; screenX++) {
-            const xProgress = (screenX - SCREEN_WIDTH / 2) / (SCREEN_WIDTH / 2);
-            const horizonYAtX = horizon + Math.sin(horizonTilt) * (SCREEN_WIDTH / 2) * xProgress;
-            
-            const distanceFromHorizon = screenY - horizonYAtX;
+    // Optimized ground rendering using scanlines
+    const SCANLINE_SPACING = 2;
+    const speedFactor = currentSpeedStage / MAX_SPEED_STAGE;
+    const speedAdjustedGridSize = GRID_SIZE * (1 + (currentSpeedStage * 0.25));
+    
+    // Pre-calculate tilt factors
+    const tiltAngle = horizonTilt;
+    const cosTheta = Math.cos(tiltAngle);
+    const sinTheta = Math.sin(tiltAngle);
+    
+    // Calculate tilted horizon points for ground alignment
+    const horizonPoints = [];
+    const numHorizonSegments = Math.ceil(SCREEN_WIDTH / SCANLINE_SPACING);
+    
+    for (let x = 0; x <= SCREEN_WIDTH; x += SCANLINE_SPACING) {
+        const xProgress = (x - SCREEN_WIDTH / 2) / (SCREEN_WIDTH / 2);
+        const y = horizon + Math.sin(horizonTilt) * (SCREEN_WIDTH / 2) * xProgress;
+        horizonPoints.push({ x, y });
+    }
+    
+    // Draw ground from tilted horizon
+    for (let i = 0; i < horizonPoints.length - 1; i++) {
+        const startX = horizonPoints[i].x;
+        const endX = horizonPoints[i + 1].x;
+        const startY = horizonPoints[i].y;
+        
+        for (let screenY = Math.floor(startY); screenY < SCREEN_HEIGHT; screenY += SCANLINE_SPACING) {
+            const distanceFromHorizon = screenY - startY;
             if (distanceFromHorizon <= 0) continue;
             
-            // Apply Mode 7 perspective with forward movement
+            // Calculate perspective for this scanline
             const z = (distanceFromHorizon * baseScale) + position.z;
             const scaleLine = cameraHeight / distanceFromHorizon;
             
-            let worldX = (screenX - SCREEN_WIDTH / 2) * scaleLine;
-            let worldY = z;
-
-            let rotatedX = worldX * Math.cos(angle) - worldY * Math.sin(angle);
-            let rotatedY = worldX * Math.sin(angle) + worldY * Math.cos(angle);
+            // Calculate the tilt offset for this scanline
+            const verticalProgress = (screenY - horizon) / (SCREEN_HEIGHT - horizon);
+            const xOffset = Math.sin(horizonTilt) * (SCREEN_WIDTH / 2) * verticalProgress;
             
-            let finalX = rotatedX - position.x;
-            let finalY = rotatedY - position.y;
-            
-            // Adjust grid pattern based on speed and scroll offset
-            const speedAdjustedGridSize = GRID_SIZE * (1 + (currentSpeedStage * 0.25)); // Reduced scaling factor
-            const adjustedY = finalY + scrollOffset;
-            
-            // Smoother grid pattern calculation
-            const gridX = finalX / speedAdjustedGridSize;
-            const gridY = adjustedY / speedAdjustedGridSize;
-            const isGrid = (Math.floor(gridX) + Math.floor(gridY)) % 2 === 0;
-            
-            // Smoother color transitions
-            const speedFactor = currentSpeedStage / MAX_SPEED_STAGE;
-            const baseColor = isGrid ? 0x00ff00 : 0x008800;
-            const brightnessBoost = Math.floor(speedFactor * 30); // Reduced brightness variation
-            
-            this.graphics.fillStyle(adjustColorBrightness(baseColor, brightnessBoost));
-            this.graphics.fillPoint(screenX, screenY, 1);
+            // Draw segment
+            for (let screenX = startX; screenX < endX; screenX += SCANLINE_SPACING) {
+                const xProgress = (screenX - SCREEN_WIDTH / 2) / (SCREEN_WIDTH / 2);
+                
+                // Apply horizon tilt to world coordinates
+                let worldX = (screenX - SCREEN_WIDTH / 2 - xOffset * xProgress) * scaleLine;
+                let worldY = z;
+                
+                // Apply camera rotation and tilt transformation
+                let tiltedX = worldX * cosTheta - worldY * sinTheta;
+                let tiltedY = worldX * sinTheta + worldY * cosTheta;
+                
+                let rotatedX = tiltedX * Math.cos(angle) - tiltedY * Math.sin(angle);
+                let rotatedY = tiltedX * Math.sin(angle) + tiltedY * Math.cos(angle);
+                
+                let finalX = rotatedX - position.x;
+                let finalY = rotatedY - position.y;
+                
+                const adjustedY = finalY + scrollOffset;
+                
+                // Grid pattern calculation
+                const gridX = finalX / speedAdjustedGridSize;
+                const gridY = adjustedY / speedAdjustedGridSize;
+                const isGrid = (Math.floor(gridX) + Math.floor(gridY)) % 2 === 0;
+                
+                const baseColor = isGrid ? 0x00ff00 : 0x008800;
+                const brightnessBoost = Math.floor(speedFactor * 30);
+                
+                this.graphics.fillStyle(adjustColorBrightness(baseColor, brightnessBoost));
+                this.graphics.fillRect(screenX, screenY, SCANLINE_SPACING, SCANLINE_SPACING);
+            }
         }
     }
 
